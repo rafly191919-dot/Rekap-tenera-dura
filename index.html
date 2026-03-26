@@ -1,0 +1,561 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  LayoutDashboard, 
+  PlusCircle, 
+  CalendarDays, 
+  Table as TableIcon, 
+  Users, 
+  Trash2, 
+  CheckCircle2, 
+  AlertCircle,
+  Search,
+  Menu,
+  X,
+  ArrowUpRight,
+  Download,
+  FileSpreadsheet
+} from 'lucide-react';
+
+// --- INITIAL DATA & CONSTANTS ---
+const INITIAL_SUPPLIERS = [
+  { id: 1, nama: 'CV Lembah Hijau Perkasa', wa: '08123456789', status: 'Aktif' },
+  { id: 2, nama: 'Koperasi Karya Mandiri', wa: '08123456780', status: 'Aktif' },
+  { id: 3, nama: 'Tani Rampah Jaya', wa: '08123456781', status: 'Aktif' },
+  { id: 4, nama: 'PT Putra Utama Lestari', wa: '08123456782', status: 'Aktif' },
+  { id: 5, nama: 'PT Manunggal Adi Jaya', wa: '08123456783', status: 'Aktif' },
+];
+
+const App = () => {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [transactions, setTransactions] = useState([]);
+  const [suppliers, setSuppliers] = useState(INITIAL_SUPPLIERS);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  // Form States
+  const [formData, setFormData] = useState({
+    tanggal: new Date().toISOString().split('T')[0],
+    supplier: '',
+    customSupplier: '',
+    sopir: '',
+    plat: '',
+    tenera: 0,
+    dura: 0
+  });
+
+  const totalInput = Number(formData.tenera) + Number(formData.dura);
+  const isInputValid = totalInput === 100 && (Number(formData.tenera) > 0 || Number(formData.dura) > 0);
+
+  // --- LOGIC: TRANSACTION ID GENERATOR ---
+  const generateTrxId = () => {
+    const datePart = formData.tanggal.replace(/-/g, '');
+    const count = transactions.filter(t => t.tanggal === formData.tanggal).length + 1;
+    return `TRX-${datePart}-${String(count).padStart(3, '0')}`;
+  };
+
+  // --- ACTIONS ---
+  const handleSaveTransaction = () => {
+    if (!isInputValid) return;
+
+    const newTrx = {
+      id: generateTrxId(),
+      tanggal: formData.tanggal,
+      jam: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+      supplier: formData.supplier === 'Lainnya' || !formData.supplier ? formData.customSupplier : formData.supplier,
+      sopir: formData.sopir,
+      plat: formData.plat,
+      tenera: Number(formData.tenera),
+      dura: Number(formData.dura),
+      total: 100,
+      timestamp: new Date().getTime()
+    };
+
+    setTransactions([newTrx, ...transactions]);
+    setFormData({
+      ...formData,
+      sopir: '',
+      plat: '',
+      tenera: 0,
+      dura: 0,
+      customSupplier: ''
+    });
+    setActiveTab('spreadsheet');
+  };
+
+  const handleDeleteTrx = (id) => {
+    setTransactions(transactions.filter(t => t.id !== id));
+  };
+
+  const handleAddSupplier = (nama) => {
+    const newSup = { id: Date.now(), nama, wa: '-', status: 'Aktif' };
+    setSuppliers([...suppliers, newSup]);
+  };
+
+  // --- EXPORT TO EXCEL (CSV) LOGIC ---
+  const exportToExcel = () => {
+    if (transactions.length === 0) return;
+
+    // Header CSV
+    const headers = ["ID TRX", "Tanggal", "Jam", "Supplier", "Sopir", "Plat Nomor", "Tenera (%)", "Dura (%)"];
+    
+    // Data Rows
+    const rows = transactions.map(t => [
+      t.id,
+      t.tanggal,
+      t.jam,
+      t.supplier,
+      t.sopir,
+      t.plat,
+      t.tenera,
+      t.dura
+    ]);
+
+    // Gabungkan Header & Rows
+    const csvContent = [headers, ...rows]
+      .map(e => e.join(","))
+      .join("\n");
+
+    // Download Blob
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", `Rekap_DuraTenera_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- COMPUTATIONS FOR RECAPS ---
+  const getRecapData = (filterFn) => {
+    const filtered = filterFn ? transactions.filter(filterFn) : transactions;
+    
+    const totalTrx = filtered.length;
+    const totalTenera = filtered.reduce((acc, curr) => acc + curr.tenera, 0);
+    const totalDura = filtered.reduce((acc, curr) => acc + curr.dura, 0);
+    
+    const percTenera = totalTrx > 0 ? (totalTenera / (totalTrx * 100) * 100).toFixed(2) : 0;
+    const percDura = totalTrx > 0 ? (totalDura / (totalTrx * 100) * 100).toFixed(2) : 0;
+
+    const dominan = Number(percTenera) > Number(percDura) ? 'Tenera' : Number(percDura) > Number(percTenera) ? 'Dura' : 'Seimbang';
+    
+    const groupData = filtered.reduce((acc, curr) => {
+      if (!acc.suppliers[curr.supplier]) acc.suppliers[curr.supplier] = { count: 0, sumTenera: 0, sumDura: 0 };
+      acc.suppliers[curr.supplier].count += 1;
+      acc.suppliers[curr.supplier].sumTenera += curr.tenera;
+      acc.suppliers[curr.supplier].sumDura += curr.dura;
+
+      if (!acc.sopirs[curr.sopir]) acc.sopirs[curr.sopir] = { count: 0, sumTenera: 0, sumDura: 0 };
+      acc.sopirs[curr.sopir].count += 1;
+      acc.sopirs[curr.sopir].sumTenera += curr.tenera;
+      acc.sopirs[curr.sopir].sumDura += curr.dura;
+
+      return acc;
+    }, { suppliers: {}, sopirs: {} });
+
+    const topSupplier = Object.entries(groupData.suppliers).sort((a,b) => b[1].count - a[1].count)[0]?.[0] || '-';
+    const topSopir = Object.entries(groupData.sopirs).sort((a,b) => b[1].count - a[1].count)[0]?.[0] || '-';
+
+    const detailSupplier = Object.entries(groupData.suppliers).map(([name, data]) => ({
+      name,
+      count: data.count,
+      totalTenera: data.sumTenera,
+      totalDura: data.sumDura,
+      avgTenera: (data.sumTenera / data.count).toFixed(2),
+      avgDura: (data.sumDura / data.count).toFixed(2)
+    }));
+
+    const detailSopir = Object.entries(groupData.sopirs).map(([name, data]) => ({
+      name,
+      count: data.count,
+      totalTenera: data.sumTenera,
+      totalDura: data.sumDura,
+      avgTenera: (data.sumTenera / data.count).toFixed(2),
+      avgDura: (data.sumDura / data.count).toFixed(2)
+    }));
+
+    return { totalTrx, totalTenera, totalDura, percTenera, percDura, dominan, topSupplier, topSopir, detailSupplier, detailSopir };
+  };
+
+  const today = new Date().toISOString().split('T')[0];
+  const dashboardData = useMemo(() => getRecapData(t => t.tanggal === today), [transactions, today]);
+
+  // --- SUB-COMPONENTS ---
+  const StatCard = ({ title, value, colorClass }) => (
+    <div className={`bg-white p-5 rounded-xl shadow-sm border-l-4 ${colorClass}`}>
+      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">{title}</p>
+      <p className="text-2xl font-black mt-1">{value}</p>
+    </div>
+  );
+
+  const TableHeader = ({ title, count }) => (
+    <div className="bg-green-800 p-4 text-white flex justify-between items-center rounded-t-xl">
+      <h3 className="font-bold flex items-center gap-2 text-sm">
+        <ArrowUpRight size={16} /> {title}
+      </h3>
+      <span className="bg-green-700 px-3 py-1 rounded-full text-[10px] font-bold">{count} Data</span>
+    </div>
+  );
+
+  const RecapSection = ({ data, title }) => (
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div className="flex items-center justify-between border-b border-gray-200 pb-4">
+        <h2 className="text-2xl font-black text-green-900 tracking-tight">{title}</h2>
+        <div className="text-right">
+           <p className="text-[10px] text-gray-400 font-bold uppercase">Status Laporan</p>
+           <p className="text-xs font-bold text-green-600">Final & Terverifikasi</p>
+        </div>
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <StatCard title="Total Transaksi" value={data.totalTrx} colorClass="border-green-600" />
+        <StatCard title="Akumulasi Tenera" value={data.totalTenera} colorClass="border-blue-600" />
+        <StatCard title="Akumulasi Dura" value={data.totalDura} colorClass="border-orange-600" />
+      </div>
+
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Komposisi Rata-Rata (%)</p>
+        <div className="relative h-12 w-full bg-gray-100 rounded-xl overflow-hidden flex shadow-inner">
+          <div style={{ width: `${data.percTenera}%` }} className="bg-blue-600 h-full flex items-center justify-center text-white text-xs font-black transition-all duration-700 ease-out">
+            {Number(data.percTenera) > 10 && `${data.percTenera}%`}
+          </div>
+          <div style={{ width: `${data.percDura}%` }} className="bg-orange-500 h-full flex items-center justify-center text-white text-xs font-black transition-all duration-700 ease-out">
+            {Number(data.percDura) > 10 && `${data.percDura}%`}
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-6 rounded-2xl border border-green-200 shadow-sm">
+        <p className="text-[10px] font-black text-green-700 uppercase mb-4 tracking-widest">Kesimpulan Analitik</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-center md:text-left">
+          <div className="border-b md:border-b-0 md:border-r border-green-100 pb-4 md:pb-0">
+            <p className="text-xs text-green-600 font-bold mb-1">Dominasi Buah</p>
+            <p className="text-xl font-black text-green-900">{data.dominan}</p>
+          </div>
+          <div className="border-b md:border-b-0 md:border-r border-green-100 py-4 md:py-0">
+            <p className="text-xs text-green-600 font-bold mb-1">Supplier Teratas</p>
+            <p className="text-xl font-black text-green-900">{data.topSupplier}</p>
+          </div>
+          <div className="py-4 md:py-0">
+            <p className="text-xs text-green-600 font-bold mb-1">Sopir Teratas</p>
+            <p className="text-xl font-black text-green-900">{data.topSopir}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-8">
+        <div className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100">
+          <TableHeader title="REKAP PER SUPPLIER" count={data.detailSupplier.length} />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-wider">
+                  <th className="p-4">Nama Supplier</th>
+                  <th className="p-4 text-center">Trx</th>
+                  <th className="p-4 text-center bg-blue-50/30">Total Tenera</th>
+                  <th className="p-4 text-center bg-orange-50/30">Total Dura</th>
+                  <th className="p-4 text-center">Avg Ten</th>
+                  <th className="p-4 text-center">Avg Dur</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {data.detailSupplier.map((s, i) => (
+                  <tr key={i} className="hover:bg-green-50/30 transition-colors">
+                    <td className="p-4 font-black text-gray-800">{s.name}</td>
+                    <td className="p-4 text-center font-bold text-gray-500">{s.count}</td>
+                    <td className="p-4 text-center font-black text-blue-700 bg-blue-50/20">{s.totalTenera}</td>
+                    <td className="p-4 text-center font-black text-orange-700 bg-orange-50/20">{s.totalDura}</td>
+                    <td className="p-4 text-center font-bold text-blue-600">{s.avgTenera}%</td>
+                    <td className="p-4 text-center font-bold text-orange-600">{s.avgDura}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-md overflow-hidden border border-gray-100">
+          <TableHeader title="REKAP PER SOPIR" count={data.detailSopir.length} />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead>
+                <tr className="bg-gray-50 text-gray-400 font-bold uppercase text-[10px] tracking-wider">
+                  <th className="p-4">Nama Sopir</th>
+                  <th className="p-4 text-center">Trx</th>
+                  <th className="p-4 text-center bg-blue-50/30">Total Tenera</th>
+                  <th className="p-4 text-center bg-orange-50/30">Total Dura</th>
+                  <th className="p-4 text-center">Avg Ten</th>
+                  <th className="p-4 text-center">Avg Dur</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {data.detailSopir.map((s, i) => (
+                  <tr key={i} className="hover:bg-green-50/30 transition-colors">
+                    <td className="p-4 font-black text-gray-800">{s.name}</td>
+                    <td className="p-4 text-center font-bold text-gray-500">{s.count}</td>
+                    <td className="p-4 text-center font-black text-blue-700 bg-blue-50/20">{s.totalTenera}</td>
+                    <td className="p-4 text-center font-black text-orange-700 bg-orange-50/20">{s.totalDura}</td>
+                    <td className="p-4 text-center font-bold text-blue-600">{s.avgTenera}%</td>
+                    <td className="p-4 text-center font-bold text-orange-600">{s.avgDura}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="flex h-screen bg-gray-50 font-sans text-gray-900 overflow-hidden">
+      
+      {/* SIDEBAR */}
+      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-green-950 text-white transform transition-transform duration-300 lg:relative lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="p-6 flex items-center justify-between border-b border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="bg-green-500 p-1.5 rounded-lg shadow-lg shadow-green-500/20">
+              <div className="w-5 h-5 bg-white rounded-sm"></div>
+            </div>
+            <span className="font-black text-lg tracking-tighter uppercase italic">DuraTenera</span>
+          </div>
+          <button className="lg:hidden" onClick={() => setSidebarOpen(false)}><X size={20}/></button>
+        </div>
+        
+        <nav className="p-4 space-y-1 overflow-y-auto">
+          {[
+            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+            { id: 'input', label: 'Input Transaksi', icon: PlusCircle },
+            { id: 'harian', label: 'Rekap Harian', icon: CalendarDays },
+            { id: 'mingguan', label: 'Rekap Mingguan', icon: CalendarDays },
+            { id: 'bulanan', label: 'Rekap Bulanan', icon: CalendarDays },
+            { id: 'spreadsheet', label: 'Spreadsheet', icon: TableIcon },
+            { id: 'supplier', label: 'Master Supplier', icon: Users },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => { setActiveTab(item.id); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all font-bold text-xs uppercase tracking-widest ${activeTab === item.id ? 'bg-green-600 text-white shadow-lg' : 'text-green-300 hover:bg-white/5 hover:text-white'}`}
+            >
+              <item.icon size={16} />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
+
+      {/* MAIN CONTENT */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <header className="h-16 bg-white border-b flex items-center justify-between px-8 shrink-0">
+          <button className="lg:hidden p-2 hover:bg-gray-100 rounded-lg" onClick={() => setSidebarOpen(true)}>
+            <Menu size={24} />
+          </button>
+          <div className="flex items-center gap-6">
+            <div className="hidden md:flex flex-col items-end">
+               <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Engine Active</span>
+               <span className="text-xs font-bold text-green-600 flex items-center gap-1.5 uppercase tracking-tighter">Connected</span>
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto p-8 bg-[#fafafa]">
+          {activeTab === 'dashboard' && (
+            <div className="max-w-6xl mx-auto">
+               <RecapSection data={dashboardData} title="Operasional Hari Ini" />
+            </div>
+          )}
+
+          {activeTab === 'input' && (
+            <div className="max-w-3xl mx-auto">
+               <div className="bg-white rounded-3xl shadow-xl shadow-gray-200/50 border border-gray-100 overflow-hidden">
+                  <div className="bg-green-900 p-8 text-white relative">
+                    <div className="relative z-10">
+                       <h2 className="text-2xl font-black italic tracking-tighter uppercase">Entry Transaksi</h2>
+                       <p className="text-green-300 text-[10px] mt-1 font-bold uppercase tracking-widest">Validasi Persentase Wajib 100%</p>
+                    </div>
+                  </div>
+                  
+                  <div className="p-8 space-y-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Tanggal</label>
+                          <input type="date" value={formData.tanggal} onChange={(e) => setFormData({...formData, tanggal: e.target.value})} className="w-full p-4 border-2 border-gray-100 rounded-2xl bg-gray-50 outline-none font-bold" />
+                       </div>
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Supplier</label>
+                          <select value={formData.supplier} onChange={(e) => setFormData({...formData, supplier: e.target.value})} className="w-full p-4 border-2 border-gray-100 rounded-2xl bg-gray-50 outline-none font-bold">
+                            <option value="">-- Pilih Supplier --</option>
+                            {suppliers.map(s => <option key={s.id} value={s.nama}>{s.nama}</option>)}
+                            <option value="Lainnya">Input Manual (Lainnya)</option>
+                          </select>
+                       </div>
+                    </div>
+
+                    {formData.supplier === 'Lainnya' && (
+                      <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
+                         <label className="text-[10px] font-black text-orange-400 uppercase tracking-widest">Nama Supplier Baru</label>
+                         <input type="text" value={formData.customSupplier} onChange={(e) => setFormData({...formData, customSupplier: e.target.value})} className="w-full p-4 border-2 border-orange-100 rounded-2xl bg-orange-50/30" />
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Sopir</label>
+                          <input type="text" value={formData.sopir} onChange={(e) => setFormData({...formData, sopir: e.target.value})} className="w-full p-4 border-2 border-gray-100 rounded-2xl bg-gray-50" placeholder="Nama..." />
+                       </div>
+                       <div className="space-y-2">
+                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">No. Plat</label>
+                          <input type="text" value={formData.plat} onChange={(e) => setFormData({...formData, plat: e.target.value})} className="w-full p-4 border-2 border-gray-100 rounded-2xl bg-gray-50" placeholder="Plat Kendaraan..." />
+                       </div>
+                    </div>
+
+                    <div className="bg-gray-50 p-8 rounded-3xl border-2 border-dashed border-gray-200">
+                       <div className="grid grid-cols-2 gap-12">
+                          <div className="text-center">
+                             <label className="block text-xs font-black text-blue-600 mb-4 uppercase">Tenera (%)</label>
+                             <input type="number" value={formData.tenera} onChange={(e) => setFormData({...formData, tenera: e.target.value})} className="w-full text-center text-5xl font-black p-2 border-b-4 border-blue-200 bg-transparent outline-none text-blue-800" />
+                          </div>
+                          <div className="text-center">
+                             <label className="block text-xs font-black text-orange-600 mb-4 uppercase">Dura (%)</label>
+                             <input type="number" value={formData.dura} onChange={(e) => setFormData({...formData, dura: e.target.value})} className="w-full text-center text-5xl font-black p-2 border-b-4 border-orange-200 bg-transparent outline-none text-orange-800" />
+                          </div>
+                       </div>
+                       <div className={`mt-8 p-4 rounded-2xl flex items-center justify-center gap-3 font-black text-xs uppercase tracking-tighter ${isInputValid ? 'bg-green-600 text-white' : 'bg-red-50 text-red-500'}`}>
+                          {isInputValid ? <CheckCircle2 size={20}/> : <AlertCircle size={20}/>}
+                          <span>TOTAL: {totalInput}% &bull; {isInputValid ? 'VALID' : 'WAJIB 100%'}</span>
+                       </div>
+                    </div>
+
+                    <button disabled={!isInputValid} onClick={handleSaveTransaction} className={`w-full p-5 rounded-2xl font-black text-xl uppercase tracking-tighter transition-all ${isInputValid ? 'bg-green-900 text-white hover:bg-black' : 'bg-gray-200 text-gray-400'}`}>
+                      Simpan Transaksi
+                    </button>
+                  </div>
+               </div>
+            </div>
+          )}
+
+          {(activeTab === 'harian' || activeTab === 'mingguan' || activeTab === 'bulanan') && (
+            <div className="max-w-6xl mx-auto">
+               <RecapSection 
+                 data={getRecapData(activeTab === 'harian' ? t => t.tanggal === today : null)} 
+                 title={`Rekapitulasi ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`} 
+               />
+            </div>
+          )}
+
+          {activeTab === 'spreadsheet' && (
+            <div className="space-y-6">
+               <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tighter uppercase italic">Spreadsheet Log</h2>
+                    <p className="text-xs text-gray-400 font-bold">Total Transaksi: {transactions.length}</p>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="relative">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                      <input 
+                        type="text" 
+                        placeholder="Cari..." 
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-12 pr-6 py-4 border-2 border-gray-100 rounded-2xl w-full md:w-64 outline-none focus:border-green-500 bg-white font-bold"
+                      />
+                    </div>
+                    <button 
+                      onClick={exportToExcel}
+                      disabled={transactions.length === 0}
+                      className={`flex items-center gap-2 px-6 py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl transition-all ${transactions.length > 0 ? 'bg-green-600 text-white hover:bg-green-700 active:scale-95' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                    >
+                      <Download size={18} /> Ekspor Excel
+                    </button>
+                  </div>
+               </div>
+
+               <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-x-auto">
+                  <table className="w-full text-sm text-left whitespace-nowrap">
+                    <thead className="bg-gray-50 text-gray-400 font-black uppercase text-[10px] tracking-widest">
+                      <tr>
+                        <th className="p-6">ID TRX</th>
+                        <th className="p-6">Waktu</th>
+                        <th className="p-6">Supplier</th>
+                        <th className="p-6">Sopir / Plat</th>
+                        <th className="p-6 text-center">Ten (%)</th>
+                        <th className="p-6 text-center">Dur (%)</th>
+                        <th className="p-6 text-center">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {transactions
+                        .filter(t => t.supplier.toLowerCase().includes(searchTerm.toLowerCase()) || t.sopir.toLowerCase().includes(searchTerm.toLowerCase()) || t.id.toLowerCase().includes(searchTerm.toLowerCase()))
+                        .map((t) => (
+                          <tr key={t.id} className="hover:bg-green-50/50 transition-colors">
+                            <td className="p-6 font-mono font-black text-green-700">{t.id}</td>
+                            <td className="p-6">
+                               <p className="font-black text-gray-800">{t.tanggal}</p>
+                               <p className="text-[10px] text-gray-400 font-bold">{t.jam}</p>
+                            </td>
+                            <td className="p-6 font-black text-gray-700">{t.supplier}</td>
+                            <td className="p-6">
+                               <p className="font-black text-gray-800">{t.sopir}</p>
+                               <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{t.plat}</p>
+                            </td>
+                            <td className="p-6 text-center"><span className="bg-blue-600 text-white px-3 py-1.5 rounded-lg font-black text-xs">{t.tenera}</span></td>
+                            <td className="p-6 text-center"><span className="bg-orange-500 text-white px-3 py-1.5 rounded-lg font-black text-xs">{t.dura}</span></td>
+                            <td className="p-6 text-center">
+                               <button onClick={() => handleDeleteTrx(t.id)} className="p-3 text-red-200 hover:text-red-600 rounded-xl transition-all">
+                                 <Trash2 size={20} />
+                               </button>
+                            </td>
+                          </tr>
+                        ))}
+                      {transactions.length === 0 && (
+                        <tr><td colSpan="7" className="p-32 text-center text-gray-300 italic font-bold">Log Kosong.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+               </div>
+            </div>
+          )}
+
+          {activeTab === 'supplier' && (
+            <div className="max-w-5xl mx-auto space-y-8">
+               <div className="flex items-center justify-between">
+                  <h2 className="text-2xl font-black tracking-tighter uppercase italic">Master Supplier</h2>
+                  <button 
+                    onClick={() => {
+                      const name = prompt("Nama Supplier:");
+                      if(name) handleAddSupplier(name);
+                    }}
+                    className="flex items-center gap-3 bg-black text-white px-6 py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl transition-all"
+                  >
+                    <PlusCircle size={20} /> Tambah Supplier
+                  </button>
+               </div>
+               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {suppliers.map(s => (
+                    <div key={s.id} className="bg-white p-6 rounded-3xl border-2 border-transparent hover:border-green-500/20 shadow-sm transition-all group">
+                       <div className="flex items-center gap-5">
+                          <div className="w-14 h-14 bg-green-950 text-white rounded-2xl flex items-center justify-center font-black text-xl">{s.nama.charAt(0)}</div>
+                          <div>
+                            <p className="font-black text-gray-800 text-sm leading-tight">{s.nama}</p>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">{s.status}</p>
+                          </div>
+                       </div>
+                    </div>
+                  ))}
+               </div>
+            </div>
+          )}
+        </main>
+        
+        <footer className="h-10 bg-white border-t flex items-center justify-between px-8 text-[9px] text-gray-400 uppercase tracking-[0.3em] font-black shrink-0">
+           <span>DuraTenera Analytics &bull; Engine v1.6</span>
+           <span className="text-green-500 italic">Spreadsheet Export Ready</span>
+        </footer>
+      </div>
+    </div>
+  );
+};
+
+export default App;
